@@ -15,9 +15,10 @@ RUN wget https://selenium-release.storage.googleapis.com/3.13/selenium-server-st
 
 RUN mkdir /LawinsiderScraper
 WORKDIR LawinsiderScraper
-RUN mkdir ./output
+RUN mkdir ./iofiles
 COPY clauseScraper.py ./
 COPY requirements.txt ./requirements.txt
 RUN pip install -r ./requirements.txt
+ENV RUN_FROM_DOCKER=TRUE
 
-CMD [ "python", "./clauseScraper.py" ]
+CMD [ "python", "-u", "./clauseScraper.py" ]
