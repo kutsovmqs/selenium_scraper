@@ -59,19 +59,19 @@ with open('iofiles/logs.csv', 'a') as logfile:
     for clause in clauses:
         print_log_item("--------"+clause+"--------")
         print_log_item("start time: "+time.asctime())
+        next_cursor = ''
 
         driver = webdriver.Chrome(options=get_chrome_options())
-        link = base_url % clause
+        link = base_url % clause + next_cursor
         driver.get(link)
         authorize(driver)
 
         clause_id = 1
-        next_cursor = ''
         items = []
 
         print_log_item(link)
 
-        with open('iofiles/%s.csv' % clause, 'w') as outfile:
+        with open('iofiles/%s.csv' % clause, 'a') as outfile:
             LIWriter = csv.writer(outfile)
             while len(driver.find_elements_by_xpath(xpath % clause_id)) > 0:
                 items.append(driver.find_element_by_xpath(xpath % clause_id).text)
@@ -96,7 +96,7 @@ with open('iofiles/logs.csv', 'a') as logfile:
             for item in items:
                 LIWriter.writerow([item])
             print_log_item("scraped clauses: " + str(clause_id - 1) + "   time: "+time.asctime())
-        driver.close()
+        # driver.close()
         print_log_item("end time: "+time.asctime())
     if virtual_display:
         display.stop()
