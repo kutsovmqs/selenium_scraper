@@ -1,4 +1,8 @@
 from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 import psycopg2
 import time
@@ -40,10 +44,12 @@ def get_clauses_list():
     return clauses_list
 
 
+# def save_clause(clause_id, category_id):
 def save_clause(clause_id, category_id):
     item = driver.find_element_by_xpath(xpath % clause_id).text
-    sql_string = 'INSERT INTO clauses(clause_category_id, text) VALUES(%s, %s) RETURNING id'
-    db_cursor.execute(sql_string, (category_id, item,))
+    sql_string = 'INSERT INTO clauses(clause_category_id, text, original_id) ' \
+                 'VALUES(%s, %s, %s) RETURNING id'
+    db_cursor.execute(sql_string, (category_id, item, clause_id))
     db_clause_id = db_cursor.fetchall()[0]
     conn.commit()
     save_samples(db_clause_id)
@@ -70,7 +76,7 @@ def get_clause_category_id(clause_name):
         db_cursor.execute(sql_string, (clause_name,))
         category_id = db_cursor.fetchall()[0]
         conn.commit()
-    return category_id
+    return category_id[0]
 
 
 PAGE_CLAUSE_COUNT = 10
@@ -82,6 +88,12 @@ clauses = get_clauses_list()  # properties
 base_url = "http://www.lawinsider.com/clause/%s"
 xpath = '//div[@data-clause-id=%d]/div[@class="snippet-content"]'
 virtual_display = bool(os.environ.get("RUN_FROM_DOCKER"))
+testing = bool(os.environ.get("TESTING"))
+if testing:
+    dbname = "LI_scraper_test"
+else:
+    dbname = "LI_scraper"
+
 
 if virtual_display:
     display = Display(visible=0, size=(1280, 2560))
@@ -89,7 +101,7 @@ if virtual_display:
 
 with open('iofiles/logs.csv', 'a') as logfile:
     LogWriter = csv.writer(logfile)
-    with psycopg2.connect(dbname='postgres', user='postgres', password='Maanver12', host='localhost') as conn:
+    with psycopg2.connect(dbname=dbname, user='postgres', password='Maanver12', host='localhost') as conn:
         with conn.cursor() as db_cursor:
             for clause in clauses:
                 category_id = get_clause_category_id(clause)
@@ -103,30 +115,36 @@ with open('iofiles/logs.csv', 'a') as logfile:
                 driver.get(link)
                 authorize(driver)
                 print_log_item(link)
+                scraped = 0
+                next_cursor = "start"
 
-                clause_id = 1
-
-                # with open('iofiles/%s.csv' % clause, 'a') as outfile:
-                #     LIWriter = csv.writer(outfile)
-                # while len(driver.find_elements_by_xpath(xpath % clause_id)) > 0:
-                while len(driver.find_elements_by_xpath(xpath % clause_id)) > 0:
-                    save_clause(clause_id, category_id)
-                    if clause_id % PAGE_CLAUSE_COUNT == 0:
+                while next_cursor != "":
+                    for i in range(PAGE_RELOAD_COUNT):
                         driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
                         time.sleep(DELAY)
+                        # wait = WebDriverWait(driver, 30)
+                        # element = wait.until(EC.presence_of_element_located((By.XPATH, xpath % int(i*10+1))))
 
-                    if clause_id % (PAGE_CLAUSE_COUNT * PAGE_RELOAD_COUNT) == 0:
-                        next_cursor = driver.find_elements_by_xpath('//div[@data-next-cursor]')[PAGE_RELOAD_COUNT-1].get_attribute('data-next-cursor')
+                    first_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[0].get_attribute('data-clause-id'))
+                    last_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[-1].get_attribute('data-clause-id'))
+                    for clause_id in range(first_clause_id, last_clause_id+1):
+                        save_clause(clause_id, category_id)
+                        scraped = scraped + 1
 
-                    if next_cursor != "" and clause_id % (PAGE_CLAUSE_COUNT * PAGE_RELOAD_COUNT) == 0:
-                        print_log_item("scraped clauses: " + str(clause_id) + "   time: "+time.asctime())
+                    next_cursor = driver.find_elements_by_xpath('//div[@data-next-cursor]')[-1].get_attribute('data-next-cursor')
+                    if next_cursor != "":
+                        print_log_item("scraped clauses: " + str(scraped) + "   time: " + time.asctime())
                         link = base_url % clause + '?cursor=' + next_cursor
-                        driver.get(link)
                         print_log_item(link)
-
-                        time.sleep(DELAY)
-                    clause_id = clause_id + 1
-                print_log_item("scraped clauses: " + str(clause_id - 1) + "   time: "+time.asctime())
+                        driver.get(link)
+                        try:
+                            wait = WebDriverWait(driver, 30)
+                            element = wait.until(EC.presence_of_element_located((By.XPATH, '//div[@data-next-cursor]')))
+                        except TimeoutException:
+                            time.sleep(600)
+                            driver.get(link)
+                            print_log_item("ALERT: TIMEOUT EXCEPTION")
+                            print_log_item(link)
                 # driver.close()
                 print_log_item("end time: "+time.asctime())
 if virtual_display:
