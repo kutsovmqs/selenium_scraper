@@ -44,7 +44,6 @@ def get_clauses_list():
     return clauses_list
 
 
-# def save_clause(clause_id, category_id):
 def save_clause(clause_id, category_id):
     item = driver.find_element_by_xpath(xpath % clause_id).text
     sql_string = 'INSERT INTO clauses(clause_category_id, text, original_id) ' \
@@ -72,7 +71,6 @@ def get_clause_category_id(clause_name):
 
     if category_id[0] == 0:
         sql_string = 'INSERT INTO clause_categories(name) VALUES(%s) RETURNING id'
-        # try:
         db_cursor.execute(sql_string, (clause_name,))
         category_id = db_cursor.fetchall()[0]
         conn.commit()
@@ -82,9 +80,10 @@ def get_clause_category_id(clause_name):
 PAGE_CLAUSE_COUNT = 10
 PAGE_RELOAD_COUNT = 3
 DELAY = 5
+db_login = os.environ.get("DB_LOGIN")
+db_password = os.environ.get("DB_PASSWORD")
 
-# clauses = ['expulsion', 'incentive-bonus', 'counterparts']  # properties
-clauses = get_clauses_list()  # properties
+clauses = get_clauses_list()
 base_url = "http://www.lawinsider.com/clause/%s"
 xpath = '//div[@data-clause-id=%d]/div[@class="snippet-content"]'
 virtual_display = bool(os.environ.get("RUN_FROM_DOCKER"))
@@ -99,17 +98,17 @@ if virtual_display:
     display = Display(visible=0, size=(1280, 2560))
     display.start()
 
+next_cursor = ''
+
 with open('iofiles/logs.csv', 'a') as logfile:
     LogWriter = csv.writer(logfile)
-    with psycopg2.connect(dbname=dbname, user='postgres', password='Maanver12', host='localhost') as conn:
+    with psycopg2.connect(dbname=dbname, user=db_login, password=db_password, host='localhost') as conn:
         with conn.cursor() as db_cursor:
             for clause in clauses:
                 category_id = get_clause_category_id(clause)
 
                 print_log_item("--------"+clause+"--------")
-                print_log_item("start time: "+time.asctime())
-                next_cursor = ''
-
+                print_log_item("start time: "+time.asctime()+"     database: " + dbname)
                 driver = webdriver.Chrome(options=get_chrome_options())
                 link = base_url % clause + next_cursor
                 driver.get(link)
@@ -119,19 +118,20 @@ with open('iofiles/logs.csv', 'a') as logfile:
                 next_cursor = "start"
 
                 while next_cursor != "":
+                    first_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[0]
+                                          .get_attribute('data-clause-id'))
                     for i in range(PAGE_RELOAD_COUNT):
                         driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
                         time.sleep(DELAY)
-                        # wait = WebDriverWait(driver, 30)
-                        # element = wait.until(EC.presence_of_element_located((By.XPATH, xpath % int(i*10+1))))
 
-                    first_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[0].get_attribute('data-clause-id'))
-                    last_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[-1].get_attribute('data-clause-id'))
+                    last_clause_id = int(driver.find_elements_by_xpath('//div[@data-clause-id]')[-1]
+                                         .get_attribute('data-clause-id'))
                     for clause_id in range(first_clause_id, last_clause_id+1):
                         save_clause(clause_id, category_id)
                         scraped = scraped + 1
 
-                    next_cursor = driver.find_elements_by_xpath('//div[@data-next-cursor]')[-1].get_attribute('data-next-cursor')
+                    next_cursor = driver.find_elements_by_xpath('//div[@data-next-cursor]')[-1]\
+                        .get_attribute('data-next-cursor')
                     if next_cursor != "":
                         print_log_item("scraped clauses: " + str(scraped) + "   time: " + time.asctime())
                         link = base_url % clause + '?cursor=' + next_cursor
@@ -141,9 +141,12 @@ with open('iofiles/logs.csv', 'a') as logfile:
                             wait = WebDriverWait(driver, 30)
                             element = wait.until(EC.presence_of_element_located((By.XPATH, '//div[@data-next-cursor]')))
                         except TimeoutException:
-                            time.sleep(600)
+                            print_log_item("ALERT: TIMEOUT EXCEPTION (PAGE RELOADING)" + "   time: " + time.asctime())
+                            driver.close()
+                            time.sleep(1260)
+                            driver = webdriver.Chrome(options=get_chrome_options())
                             driver.get(link)
-                            print_log_item("ALERT: TIMEOUT EXCEPTION")
+                            authorize(driver)
                             print_log_item(link)
                 # driver.close()
                 print_log_item("end time: "+time.asctime())
